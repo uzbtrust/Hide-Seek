@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+checkpoint.pth
+training_progress*.png
+.DS_Store
