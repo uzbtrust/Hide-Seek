@@ -302,6 +302,4 @@ The system detects hardware at startup and scales accordingly:
 
 ---
 
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
+Made with ❤️ by uzbtrust
