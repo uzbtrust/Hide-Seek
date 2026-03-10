@@ -265,14 +265,14 @@ The system detects hardware at startup and scales accordingly:
 
 ## Benchmark Results
 
-| Hardware | Steps/sec | Training Time (2000 ep) |
+| Hardware | Steps/sec | Training Time (1000 ep) |
 |----------|-----------|------------------------|
-| NVIDIA A100 | ~180,000 | ~15 min |
-| NVIDIA T4 | ~90,000 | ~30 min |
-| Apple M2 Pro | ~45,000 | ~60 min |
-| CPU (8-core) | ~12,000 | ~3 hr |
+| NVIDIA A100 | ~180,000 | ~30 sec |
+| NVIDIA T4 | ~90,000 | ~1 min |
+| Apple M4 / M2 Pro | ~45,000 | ~2 min |
+| CPU (8-core) | ~12,000 | ~8 min |
 
-*Benchmarks measured with default 2v2 configuration (4 agents, 3 boxes).*
+*Benchmarks measured with default 2v2 configuration (4 agents, 3 boxes, 240 steps/ep).*
 
 ---
 

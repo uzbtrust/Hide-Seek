@@ -4,3 +4,5 @@ __pycache__/
 checkpoint.pth
 training_progress*.png
 .DS_Store
+venv/
+.vscode/
