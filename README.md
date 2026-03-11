@@ -5,7 +5,7 @@
 ![Pygame](https://img.shields.io/badge/Pygame-2.0+-green.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-Two teams of AI agents — **Hiders** and **Seekers** — compete in a 2D arena. Through pure self-play reinforcement learning, agents discover emergent strategies: hiders learn to build shelters from movable boxes, while seekers learn to breach them. No behavior is manually programmed.
+Two teams of AI agents — **Hiders** and **Seekers** — compete in a 30×30 arena with **static walls** and **movable boxes**. Through pure self-play reinforcement learning, agents discover emergent strategies: hiders learn to build shelters using boxes and wall corners, while seekers learn to breach them. No behavior is manually programmed.
 
 Inspired by OpenAI's 2019 paper *"Emergent Tool Use from Multi-Agent Autocurricula"*.
 
@@ -162,7 +162,7 @@ No manually engineered sub-rewards beyond these signals. All complex behavior em
 ## Neural Network Architecture
 
 ```
- Observation (obs_dim = 36)
+ Observation (obs_dim = 40)
          │
   Linear(256) → LayerNorm → ReLU
          │
@@ -184,7 +184,7 @@ Linear(6)     Linear(1)
 
 ## Observation Space
 
-Each agent receives a 36-dimensional observation vector:
+Each agent receives a 40-dimensional observation vector:
 
 | Component | Dimensions | Description |
 |-----------|-----------|-------------|
@@ -278,6 +278,32 @@ Training is **time-based** — automatically adapts to hardware:
 
 ---
 
+## Arena Layout
+
+```
+  ┌──────────────────────────────────┐
+  │  ┌──┐                    ┌──┐   │
+  │  │TL│                    │TR│   │
+  │  └──┤                    ├──┘   │
+  │     │                    │      │
+  │     │                    │      │
+  │         ┌────────────┐          │
+  │         │   CENTER   │          │
+  │         │   CROSS    │          │
+  │         └────────────┘          │
+  │     │                    │      │
+  │     │                    │      │
+  │  ┌──┤                    ├──┐   │
+  │  │BL│                    │BR│   │
+  │  └──┘                    └──┘   │
+  └──────────────────────────────────┘
+        30×30 arena · 10 walls · 5 boxes
+```
+
+**10 static walls** form a center cross + 4 L-shaped corners, creating rooms and corridors. **5 movable boxes** can be pushed by agents to build shelters or breach them. Walls block movement, LiDAR rays, and line-of-sight.
+
+---
+
 ## Key Design Decisions
 
 **No epsilon-greedy.** Exploration is handled entirely by the PPO entropy bonus $c_2 \cdot H[\pi_\theta]$. This provides smooth, state-dependent exploration rather than random action injection.
@@ -285,6 +311,8 @@ Training is **time-based** — automatically adapts to hardware:
 **Parameter sharing within teams.** All hiders share one network; all seekers share another. This enforces homogeneous policies, reduces parameter count by $N\times$, and enables knowledge transfer between same-team agents.
 
 **NumPy-vectorized physics.** All environment computations (movement, collision, LiDAR, line-of-sight) operate on batched arrays of shape `(num_envs, num_agents, ...)`. No Python loops over individual agents.
+
+**Static walls + movable boxes.** Walls create strategic zones (rooms, corridors, dead-ends). Boxes are tools agents learn to use — hiders push them to seal gaps, seekers push them aside to breach. Walls affect LiDAR raycasting, line-of-sight checks, and agent/box collision.
 
 **Self-play opponent pool.** Prevents strategy collapse by sampling opponents from a diverse pool of past policies, creating a natural auto-curriculum.
 
