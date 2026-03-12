@@ -53,6 +53,7 @@ class Config:
     chase_reward: float = 0.3
     idle_penalty: float = -1.5
     idle_threshold: int = 8
+    spread_reward: float = 0.2
     checkpoint_path: str = "checkpoint.pth"
 
 
@@ -113,16 +114,21 @@ class Arena:
         T = 0.6
         W, H = self.W, self.H
         wall_defs = [
-            (W*0.50, H*0.50, W*0.35, T),      # center H
-            (W*0.50, H*0.50, T,      H*0.35),  # center V
-            (W*0.18, H*0.82, W*0.18, T),       # TL H
-            (W*0.10, H*0.73, T,      H*0.18),  # TL V
-            (W*0.82, H*0.82, W*0.18, T),       # TR H
-            (W*0.90, H*0.73, T,      H*0.18),  # TR V
-            (W*0.18, H*0.18, W*0.18, T),       # BL H
-            (W*0.10, H*0.27, T,      H*0.18),  # BL V
-            (W*0.82, H*0.18, W*0.18, T),       # BR H
-            (W*0.90, H*0.27, T,      H*0.18),  # BR V
+            # ── Center cross (bigger) ──
+            (W*0.50, H*0.50, W*0.40, T),      # center H
+            (W*0.50, H*0.50, T,      H*0.40), # center V
+            # ── Corner alcoves (longer L-shapes) ──
+            (W*0.20, H*0.82, W*0.24, T),      # TL H
+            (W*0.09, H*0.72, T,      H*0.22), # TL V
+            (W*0.80, H*0.82, W*0.24, T),      # TR H
+            (W*0.91, H*0.72, T,      H*0.22), # TR V
+            (W*0.20, H*0.18, W*0.24, T),      # BL H
+            (W*0.09, H*0.28, T,      H*0.22), # BL V
+            (W*0.80, H*0.18, W*0.24, T),      # BR H
+            (W*0.91, H*0.28, T,      H*0.22), # BR V
+            # ── Mid-field barriers (extra cover) ──
+            (W*0.33, H*0.68, W*0.14, T),      # upper-left H
+            (W*0.67, H*0.32, W*0.14, T),      # lower-right H
         ]
         self.NW = len(wall_defs)
         self.wall_pos = np.array([[d[0], d[1]] for d in wall_defs], np.float32)
