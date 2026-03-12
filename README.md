@@ -266,17 +266,17 @@ The system detects hardware at startup and scales accordingly:
 
 ## Benchmark Results
 
-Training uses **dual stopping** on GPU — whichever limit is reached first:
+Training auto-adapts to hardware — GPU trains by step count, CPU/MPS by time:
 
-| Hardware | Steps/sec | Stop Condition | Est. Time for 60M |
-|----------|-----------|----------------|-------------------|
-| NVIDIA A100 | ~180,000 | 60M steps OR 11h | ~6 min |
+| Hardware | Steps/sec | Stop Condition | Est. Time |
+|----------|-----------|----------------|-----------|
+| NVIDIA P100 (Kaggle) | ~60,000 | 60M steps OR 11h | ~17 min |
 | NVIDIA T4 (Kaggle) | ~90,000 | 60M steps OR 11h | ~11 min |
-| NVIDIA T4 ×2 | ~130,000 | 60M steps OR 11h | ~8 min |
-| Apple MPS (M-series) | ~45,000 | 2 min (time only) | — |
-| CPU (8-core) | ~12,000 | 5 min (time only) | — |
+| NVIDIA A100 | ~180,000 | 60M steps OR 11h | ~6 min |
+| Apple MPS (M-series) | ~45,000 | 2 min (time only) | 2 min |
+| CPU (Kaggle / local) | ~5,000 | 30 min (time only) | 30 min |
 
-*GPU trains until 60M steps or 11 hours (whichever first). MPS/CPU use time-only limits for quick local testing.*
+*GPU trains until 60M steps or 11 hours (whichever first). CPU/MPS use time-only limits.*
 
 ---
 
