@@ -41,7 +41,7 @@ class Config:
     num_hiders: int = 2
     num_seekers: int = 2
     num_boxes: int = 5
-    max_episode_steps: int = 7200      # 2 min at 60 FPS (visual only)
+    max_episode_steps: int = 480       # matches training (auto-reset every episode)
     box_width: float = 1.5
     box_height: float = 1.5
     agent_radius: float = 0.4
@@ -718,9 +718,9 @@ def main() -> None:
                 with torch.no_grad():
                     ot = torch.tensor(obs, device=DEVICE)
                     h_act = hider_net.get_action(
-                        ot[:config.num_hiders], deterministic=True)
+                        ot[:config.num_hiders], deterministic=False)
                     s_act = seeker_net.get_action(
-                        ot[config.num_hiders:], deterministic=True)
+                        ot[config.num_hiders:], deterministic=False)
                     actions = torch.cat([h_act, s_act]).cpu().numpy()
                 obs, _, done, _ = arena.step(actions)
                 renderer.total_steps += 1
