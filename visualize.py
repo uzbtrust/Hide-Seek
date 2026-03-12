@@ -1,13 +1,14 @@
-"""Hide & Seek AI — Pygame Visualization
-Loads checkpoint.pth and renders multi-agent inference in real-time.
-Controls: SPACE=pause  R=reset  UP/DOWN=speed 1x-10x  S=toggle sensors  ESC=quit
+"""Hide & Seek AI — Game Viewer
+Loads checkpoint.pth and plays 5-second hide & seek rounds.
+Catch = seeker within 1.5 of visible hider → Seeker Wins!
+Survive 5 seconds hidden → Hider Wins!
+Controls: SPACE=pause  R=reset  S=toggle sensors  ESC=quit
 """
 import torch
 import torch.nn as nn
 import numpy as np
 import os
 import sys
-import time
 import math
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
@@ -17,8 +18,7 @@ if torch.cuda.is_available():
     DEVICE = torch.device("cuda:0")
     torch.cuda.set_device(0)
     _gn = torch.cuda.get_device_name(0)
-    _gc = torch.cuda.device_count()
-    print(f"\u2714 CUDA: {_gn}" + (f"  ({_gc} GPUs)" if _gc > 1 else ""))
+    print(f"\u2714 CUDA: {_gn}")
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     DEVICE = torch.device("mps")
     print("\u2714 Apple MPS")
@@ -34,6 +34,12 @@ except ImportError:
 
 
 # ── Config ────────────────────────────────────────────────────────────
+ROUND_FPS = 60
+ROUND_SECONDS = 5
+ROUND_STEPS = ROUND_FPS * ROUND_SECONDS        # 300 steps = 5 sec
+RESULT_PAUSE_FRAMES = ROUND_FPS * 2             # 2 sec pause after result
+
+
 @dataclass
 class Config:
     arena_width: int = 30
@@ -41,7 +47,7 @@ class Config:
     num_hiders: int = 2
     num_seekers: int = 2
     num_boxes: int = 5
-    max_episode_steps: int = 480       # matches training (auto-reset every episode)
+    max_episode_steps: int = ROUND_STEPS
     box_width: float = 1.5
     box_height: float = 1.5
     agent_radius: float = 0.4
@@ -50,12 +56,6 @@ class Config:
     lidar_range: float = 10.0
     local_obs_radius: float = 6.0
     max_nearby_entities: int = 6
-    chase_reward: float = 0.3
-    idle_penalty: float = -1.5
-    idle_threshold: int = 8
-    spread_reward: float = 0.2
-    pursuit_reward: float = 1.0
-    evasion_reward: float = 0.5
     catch_radius: float = 1.5
     checkpoint_path: str = "checkpoint.pth"
 
@@ -113,14 +113,15 @@ class Arena:
         self.hider_seen = np.zeros(self.NH, dtype=bool)
         self.episode_hider_ever_seen = np.zeros(self.NH, dtype=bool)
         self.lidar_dists = np.zeros((self.NA, cfg.num_lidar_rays), np.float32)
-        # ── Static walls ──
+        self.caught = False
+        # ── Static walls (16 walls — lots of hiding spots) ──
         T = 0.6
         W, H = self.W, self.H
         wall_defs = [
-            # ── Center cross (bigger) ──
+            # ── Center cross ──
             (W*0.50, H*0.50, W*0.40, T),      # center H
             (W*0.50, H*0.50, T,      H*0.40), # center V
-            # ── Corner alcoves (longer L-shapes) ──
+            # ── Corner alcoves (L-shapes) ──
             (W*0.20, H*0.82, W*0.24, T),      # TL H
             (W*0.09, H*0.72, T,      H*0.22), # TL V
             (W*0.80, H*0.82, W*0.24, T),      # TR H
@@ -129,9 +130,14 @@ class Arena:
             (W*0.09, H*0.28, T,      H*0.22), # BL V
             (W*0.80, H*0.18, W*0.24, T),      # BR H
             (W*0.91, H*0.28, T,      H*0.22), # BR V
-            # ── Mid-field barriers (extra cover) ──
+            # ── Mid-field barriers ──
             (W*0.33, H*0.68, W*0.14, T),      # upper-left H
             (W*0.67, H*0.32, W*0.14, T),      # lower-right H
+            # ── Extra hiding spots ──
+            (W*0.35, H*0.87, T,      H*0.12), # top-center-left V
+            (W*0.65, H*0.13, T,      H*0.12), # bottom-center-right V
+            (W*0.14, H*0.50, W*0.12, T),      # mid-left H
+            (W*0.86, H*0.50, W*0.12, T),      # mid-right H
         ]
         self.NW = len(wall_defs)
         self.wall_pos = np.array([[d[0], d[1]] for d in wall_defs], np.float32)
@@ -155,6 +161,7 @@ class Arena:
         self.step_count = 0
         self.hider_seen[:] = False
         self.episode_hider_ever_seen[:] = False
+        self.caught = False
         # Push agents out of walls
         r = self.cfg.agent_radius
         for w in range(self.NW):
@@ -283,7 +290,6 @@ class Arena:
                 blocked = False
                 with np.errstate(divide="ignore", invalid="ignore"):
                     inv = np.where(np.abs(dn) > 1e-8, 1.0 / dn, 1e8)
-                # Check boxes
                 for b in range(self.NB):
                     t1 = (bmin[b] - spos[s]) * inv
                     t2 = (bmax[b] - spos[s]) * inv
@@ -292,7 +298,6 @@ class Arena:
                     if tmax > tmin:
                         blocked = True
                         break
-                # Check walls
                 if not blocked:
                     for w in range(self.NW):
                         t1 = (self.wall_min[w] - spos[s]) * inv
@@ -306,7 +311,7 @@ class Arena:
                     visible[h] = True
         return visible
 
-    def step(self, actions: np.ndarray) -> Tuple[np.ndarray, np.ndarray, bool, Dict]:
+    def step(self, actions: np.ndarray) -> Tuple[np.ndarray, bool, Dict]:
         prev = self.agent_pos.copy()
         dx = np.zeros(self.NA, np.float32)
         dy = np.zeros(self.NA, np.float32)
@@ -364,7 +369,6 @@ class Arena:
                 hs = self.box_size[b] / 2
                 self.box_pos[b, 0] = np.clip(self.box_pos[b, 0], hs[0], self.W - hs[0])
                 self.box_pos[b, 1] = np.clip(self.box_pos[b, 1], hs[1], self.H - hs[1])
-                # Box-wall collision
                 for w in range(self.NW):
                     wh = self.wall_size[w] * 0.5
                     th = wh + hs
@@ -380,28 +384,23 @@ class Arena:
         vis = self._check_los()
         self.hider_seen = vis
         self.episode_hider_ever_seen |= vis
-        # Catch mechanic: seeker within catch_radius of visible hider = episode ends
-        catch_done = False
+        # Catch check
+        self.caught = False
         for h_i in range(self.NH):
             if vis[h_i]:
                 for s_i in range(self.NS):
-                    d = np.linalg.norm(self.agent_pos[self.NH + s_i] - self.agent_pos[h_i])
+                    d = np.linalg.norm(
+                        self.agent_pos[self.NH + s_i] - self.agent_pos[h_i])
                     if d < self.cfg.catch_radius:
-                        catch_done = True
-        done = (self.step_count >= self.cfg.max_episode_steps) or catch_done
-        rewards = np.zeros(self.NA, np.float32)
-        any_seen = vis.any()
-        for s_i in range(self.NS):
-            rewards[self.NH + s_i] = 1.0 if any_seen else -1.0
-        for h_i in range(self.NH):
-            rewards[h_i] = -1.0 if vis[h_i] else 1.0
+                        self.caught = True
+        time_up = self.step_count >= self.cfg.max_episode_steps
+        done = time_up or self.caught
         obs = self._observe()
-        return obs, rewards, done, {"visible": vis.copy()}
+        return obs, done, {"caught": self.caught, "time_up": time_up}
 
 
 # ── Renderer ─────────────────────────────────────────────────────────
 class Renderer:
-    # GitHub-dark palette
     BG          = (13, 17, 23)
     ARENA_BG    = (22, 27, 34)
     WALL_C      = (63, 72, 86)
@@ -422,30 +421,35 @@ class Renderer:
     ACCENT      = (88, 166, 255)
     FLOOR_TILE1 = (22, 27, 34)
     FLOOR_TILE2 = (25, 31, 39)
+    WIN_GREEN   = (56, 185, 80)
+    WIN_RED     = (248, 81, 73)
 
     def __init__(self, arena: Arena, scale: float = 28.0) -> None:
         self.arena = arena
         self.scale = scale
-        self.hud_w = 280
+        self.hud_w = 260
         self.win_w = int(arena.W * scale) + self.hud_w
         self.win_h = int(arena.H * scale)
         pygame.init()
-        pygame.display.set_caption("Hide & Seek AI \u2014 Multi-Agent RL")
+        pygame.display.set_caption("Hide & Seek AI")
         self.screen = pygame.display.set_mode((self.win_w, self.win_h))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Menlo", 13)
         self.font_b = pygame.font.SysFont("Menlo", 16, bold=True)
-        self.font_t = pygame.font.SysFont("Menlo", 20, bold=True)
+        self.font_t = pygame.font.SysFont("Menlo", 22, bold=True)
         self.font_s = pygame.font.SysFont("Menlo", 11)
+        self.font_big = pygame.font.SysFont("Menlo", 28, bold=True)
+        self.font_timer = pygame.font.SysFont("Menlo", 40, bold=True)
         self.show_sensors = True
         self.paused = False
-        self.sim_speed = 1
-        self.episode = 1
-        self.total_steps = 0
+        # Game state
+        self.round_num = 1
         self.hider_wins = 0
         self.seeker_wins = 0
-        self.total_eps = 0
-        # Precompute floor tile surface
+        self.result_text = ""
+        self.result_color = self.TEXT_C
+        self.result_countdown = 0
+        # Floor tiles
         aw = int(arena.W * scale)
         ah = int(arena.H * scale)
         self.floor_surf = pygame.Surface((aw, ah))
@@ -463,37 +467,31 @@ class Renderer:
     def draw(self) -> None:
         aw = int(self.arena.W * self.scale)
         self.screen.fill(self.BG)
-        # Floor tiles
         self.screen.blit(self.floor_surf, (0, 0))
-        # Subtle grid
+        # Grid
         for i in range(0, int(self.arena.W) + 1, 5):
             x = int(i * self.scale)
             pygame.draw.line(self.screen, self.GRID_C, (x, 0), (x, self.win_h), 1)
         for i in range(0, int(self.arena.H) + 1, 5):
             y = int(i * self.scale)
             pygame.draw.line(self.screen, self.GRID_C, (0, y), (aw, y), 1)
-        # ── Walls ──
+        # Walls
         for w in range(self.arena.NW):
             wx, wy = self.arena.wall_pos[w]
             ws = self.arena.wall_size[w]
             sx, sy = self.w2s(wx - ws[0]/2, wy + ws[1]/2)
             pw, ph = int(ws[0] * self.scale), int(ws[1] * self.scale)
             rect = pygame.Rect(sx, sy, pw, ph)
-            # Wall shadow
-            shadow = pygame.Rect(sx + 3, sy + 3, pw, ph)
-            pygame.draw.rect(self.screen, (8, 10, 16), shadow)
-            # Wall body
+            pygame.draw.rect(self.screen, (8, 10, 16),
+                             pygame.Rect(sx + 3, sy + 3, pw, ph))
             pygame.draw.rect(self.screen, self.WALL_C, rect)
-            # Top highlight
             pygame.draw.line(self.screen, self.WALL_EDGE,
                              (sx, sy), (sx + pw, sy), 2)
             pygame.draw.line(self.screen, self.WALL_EDGE,
                              (sx, sy), (sx, sy + ph), 1)
-            # Edge
             pygame.draw.rect(self.screen, self.BORDER_C, rect, 1)
-        # Arena border (thick)
         pygame.draw.rect(self.screen, self.BORDER_C, (0, 0, aw, self.win_h), 3)
-        # ── Boxes ──
+        # Boxes
         for b in range(self.arena.NB):
             bx, by = self.arena.box_pos[b]
             bw, bh = self.arena.box_size[b]
@@ -502,20 +500,15 @@ class Renderer:
             grabbed = self.arena.box_grabbed_by[b] >= 0
             color = self.BOX_GRAB if grabbed else self.BOX_C
             rect = pygame.Rect(sx, sy, pw, ph)
-            # Box shadow
-            shadow = pygame.Rect(sx + 2, sy + 2, pw, ph)
-            pygame.draw.rect(self.screen, (8, 10, 16, 80), shadow)
-            # Box body with rounded feel
+            pygame.draw.rect(self.screen, (8, 10, 16, 80),
+                             pygame.Rect(sx + 2, sy + 2, pw, ph))
             pygame.draw.rect(self.screen, color, rect)
-            # Cross pattern on box
-            cx, cy = sx + pw//2, sy + ph//2
             darker = tuple(max(c - 40, 0) for c in color)
             pygame.draw.line(self.screen, darker, (sx+3, sy+3), (sx+pw-3, sy+ph-3), 1)
             pygame.draw.line(self.screen, darker, (sx+pw-3, sy+3), (sx+3, sy+ph-3), 1)
-            # Edge
             edge_c = (255, 160, 70) if grabbed else self.BOX_EDGE
             pygame.draw.rect(self.screen, edge_c, rect, 2)
-        # ── Sensor rays ──
+        # Sensor rays
         if self.show_sensors:
             ray_surf = pygame.Surface((aw, self.win_h), pygame.SRCALPHA)
             for a in range(self.arena.NA):
@@ -534,7 +527,7 @@ class Renderer:
                     pygame.draw.line(ray_surf, rc, start, end, 1)
                     pygame.draw.circle(ray_surf, dot_c, end, 2)
             self.screen.blit(ray_surf, (0, 0))
-        # ── Agents ──
+        # Agents
         for a in range(self.arena.NA):
             ax, ay = self.arena.agent_pos[a]
             sx, sy = self.w2s(ax, ay)
@@ -542,91 +535,75 @@ class Renderer:
             is_h = a < self.arena.NH
             color = self.HIDER if is_h else self.SEEKER
             glow = self.HIDER_GLOW if is_h else self.SEEKER_GLOW
-            # Seen indicator
             if is_h and self.arena.hider_seen[a]:
                 pygame.draw.circle(self.screen, self.SEEN_C, (sx, sy), rad + 8, 2)
                 pygame.draw.circle(self.screen, (*self.SEEN_C, 40), (sx, sy), rad + 12, 1)
-            # Grab indicator
             if self.arena.agent_grabbed[a] >= 0:
                 pygame.draw.circle(self.screen, self.BOX_GRAB, (sx, sy), rad + 6, 2)
-            # Agent shadow
             pygame.draw.circle(self.screen, (8, 10, 16), (sx + 2, sy + 2), rad)
-            # Agent body
             pygame.draw.circle(self.screen, color, (sx, sy), rad)
-            # Inner highlight
             pygame.draw.circle(self.screen, glow, (sx - 2, sy - 2), max(rad - 4, 2))
-            # Bright ring
             lighter = tuple(min(c + 50, 255) for c in color)
             pygame.draw.circle(self.screen, lighter, (sx, sy), rad, 2)
-            # Heading arrow
             heading = self.arena.agent_heading[a]
             arrow_len = rad * 1.8
             ex = int(math.cos(heading) * arrow_len)
             ey = int(-math.sin(heading) * arrow_len)
             pygame.draw.line(self.screen, (255, 255, 255), (sx, sy),
                              (sx + ex, sy + ey), 2)
-            # Label
             label = f"H{a}" if is_h else f"S{a - self.arena.NH}"
             txt = self.font_s.render(label, True, self.TEXT_C)
             self.screen.blit(txt, (sx - txt.get_width()//2, sy - rad - 15))
-        # ── HUD ──
+        # HUD
         self._draw_hud(aw)
 
     def _draw_hud(self, aw: int) -> None:
-        # HUD background
         hud_rect = pygame.Rect(aw, 0, self.hud_w, self.win_h)
         pygame.draw.rect(self.screen, self.HUD_BG, hud_rect)
         pygame.draw.line(self.screen, self.BORDER_C, (aw, 0), (aw, self.win_h), 2)
         x, y = aw + 15, 15
+        hw = self.hud_w - 30
         # Title
         title = self.font_t.render("Hide & Seek AI", True, self.ACCENT)
         self.screen.blit(title, (x, y))
         y += 28
-        sub = self.font_s.render("Multi-Agent Reinforcement Learning", True, self.MUTED)
+        sub = self.font_s.render("Multi-Agent RL", True, self.MUTED)
         self.screen.blit(sub, (x, y))
         y += 22
-        # Divider
-        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + self.hud_w - 30, y))
+        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + hw, y))
+        y += 15
+        # Timer
+        remaining = max(0, ROUND_STEPS - self.arena.step_count) / ROUND_FPS
+        timer_color = self.SEEN_C if remaining < 1.5 else self.TEXT_C
+        timer_txt = self.font_timer.render(f"{remaining:.1f}s", True, timer_color)
+        self.screen.blit(timer_txt, (x + hw//2 - timer_txt.get_width()//2, y))
+        y += 50
+        # Timer bar
+        frac = self.arena.step_count / ROUND_STEPS
+        bar_w = hw
+        bar_h = 8
+        pygame.draw.rect(self.screen, self.BORDER_C, (x, y, bar_w, bar_h))
+        fill_w = int(bar_w * min(frac, 1.0))
+        bar_color = self.SEEN_C if remaining < 1.5 else self.ACCENT
+        if fill_w > 0:
+            pygame.draw.rect(self.screen, bar_color, (x, y, fill_w, bar_h))
+        y += 20
+        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + hw, y))
         y += 12
-        # Stats
-        h_wr = self.hider_wins / max(self.total_eps, 1) * 100
-        s_wr = self.seeker_wins / max(self.total_eps, 1) * 100
-        sec_label = self.font_b.render("Game", True, self.TEXT_C)
-        self.screen.blit(sec_label, (x, y))
+        # Round + Score
+        sec = self.font_b.render(f"Round {self.round_num}", True, self.TEXT_C)
+        self.screen.blit(sec, (x, y))
+        y += 25
+        # Score display
+        h_txt = self.font_b.render(f"Hiders  {self.hider_wins}", True, self.HIDER)
+        s_txt = self.font_b.render(f"Seekers {self.seeker_wins}", True, self.SEEKER)
+        self.screen.blit(h_txt, (x, y))
         y += 22
-        stats_game: List[Tuple[str, str, Tuple[int,int,int]]] = [
-            ("Episode", str(self.episode), self.TEXT_C),
-            ("Step", f"{self.arena.step_count}/{self.arena.cfg.max_episode_steps}", self.TEXT_C),
-            ("Total Steps", f"{self.total_steps:,}", self.TEXT_C),
-        ]
-        for label, val, vc in stats_game:
-            ls = self.font.render(f"{label}:", True, self.MUTED)
-            vs = self.font.render(val, True, vc)
-            self.screen.blit(ls, (x, y))
-            self.screen.blit(vs, (x + self.hud_w - 40 - vs.get_width(), y))
-            y += 20
-        y += 8
-        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + self.hud_w - 30, y))
+        self.screen.blit(s_txt, (x, y))
+        y += 30
+        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + hw, y))
         y += 12
-        sec_label = self.font_b.render("Score", True, self.TEXT_C)
-        self.screen.blit(sec_label, (x, y))
-        y += 22
-        stats_score: List[Tuple[str, str, Tuple[int,int,int]]] = [
-            ("Hider Wins", str(self.hider_wins), self.HIDER),
-            ("Seeker Wins", str(self.seeker_wins), self.SEEKER),
-            ("Hider Win%", f"{h_wr:.1f}%", self.HIDER),
-            ("Seeker Win%", f"{s_wr:.1f}%", self.SEEKER),
-        ]
-        for label, val, vc in stats_score:
-            ls = self.font.render(f"{label}:", True, self.MUTED)
-            vs = self.font.render(val, True, vc)
-            self.screen.blit(ls, (x, y))
-            self.screen.blit(vs, (x + self.hud_w - 40 - vs.get_width(), y))
-            y += 20
-        y += 8
-        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + self.hud_w - 30, y))
-        y += 12
-        # Visibility section
+        # Visibility
         vt = self.font_b.render("Visibility", True, self.TEXT_C)
         self.screen.blit(vt, (x, y))
         y += 22
@@ -641,40 +618,48 @@ class Renderer:
             self.screen.blit(t, (x + 20, y))
             y += 20
         y += 8
-        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + self.hud_w - 30, y))
+        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + hw, y))
         y += 12
-        # System
-        sec_label = self.font_b.render("System", True, self.TEXT_C)
-        self.screen.blit(sec_label, (x, y))
-        y += 22
-        sys_stats: List[Tuple[str, str]] = [
-            ("Speed", f"{self.sim_speed}x"),
-            ("FPS", f"{self.clock.get_fps():.0f}"),
-            ("Sensors", "ON" if self.show_sensors else "OFF"),
-            ("State", "PAUSED" if self.paused else "RUNNING"),
-            ("Arena", f"{int(self.arena.W)}x{int(self.arena.H)}"),
-            ("Walls", str(self.arena.NW)),
-            ("Boxes", str(self.arena.NB)),
-        ]
-        for label, val in sys_stats:
-            ls = self.font.render(f"{label}:", True, self.MUTED)
-            vs = self.font.render(val, True, self.TEXT_C)
-            self.screen.blit(ls, (x, y))
-            self.screen.blit(vs, (x + self.hud_w - 40 - vs.get_width(), y))
-            y += 20
+        # Status / Result
+        if self.result_countdown > 0:
+            rt = self.font_big.render(self.result_text, True, self.result_color)
+            self.screen.blit(rt, (x + hw//2 - rt.get_width()//2, y))
+            y += 40
+        else:
+            status = "PAUSED" if self.paused else "PLAYING..."
+            st = self.font_b.render(status, True, self.MUTED)
+            self.screen.blit(st, (x, y))
+            y += 25
+        # Arena info
+        y += 5
+        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + hw, y))
+        y += 12
+        info = self.font_s.render(
+            f"Arena {int(self.arena.W)}x{int(self.arena.H)}  "
+            f"Walls {self.arena.NW}  Boxes {self.arena.NB}",
+            True, self.MUTED)
+        self.screen.blit(info, (x, y))
+        y += 18
+        fps_txt = self.font_s.render(
+            f"FPS {self.clock.get_fps():.0f}  "
+            f"Sensors {'ON' if self.show_sensors else 'OFF'}",
+            True, self.MUTED)
+        self.screen.blit(fps_txt, (x, y))
         # Controls at bottom
-        y = self.win_h - 120
-        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + self.hud_w - 30, y))
+        y = self.win_h - 90
+        pygame.draw.line(self.screen, self.BORDER_C, (x, y), (x + hw, y))
         y += 10
         ct = self.font_b.render("Controls", True, self.TEXT_C)
         self.screen.blit(ct, (x, y))
-        y += 22
-        for line in ["SPACE  Pause/Resume", "R      Reset episode",
-                      "UP/DN  Speed 1x-10x", "S      Toggle sensors",
-                      "ESC    Quit"]:
+        y += 20
+        for line in ["SPACE  Pause/Resume", "R      New round",
+                      "S      Toggle sensors", "ESC    Quit"]:
             t = self.font_s.render(line, True, self.MUTED)
             self.screen.blit(t, (x, y))
             y += 16
+        # Footer
+        ft = self.font_s.render("Made with \u2764 by uzbtrust", True, self.MUTED)
+        self.screen.blit(ft, (x + hw//2 - ft.get_width()//2, self.win_h - 18))
 
 
 # ── Main ──────────────────────────────────────────────────────────────
@@ -722,40 +707,44 @@ def main() -> None:
                     renderer.paused = not renderer.paused
                 elif event.key == pygame.K_r:
                     obs = arena.reset()
-                    renderer.episode += 1
-                elif event.key == pygame.K_UP:
-                    renderer.sim_speed = min(renderer.sim_speed + 1, 10)
-                elif event.key == pygame.K_DOWN:
-                    renderer.sim_speed = max(renderer.sim_speed - 1, 1)
+                    renderer.round_num += 1
+                    renderer.result_countdown = 0
                 elif event.key == pygame.K_s:
                     renderer.show_sensors = not renderer.show_sensors
 
-        if not renderer.paused:
-            for _ in range(renderer.sim_speed):
-                with torch.no_grad():
-                    ot = torch.tensor(obs, device=DEVICE)
-                    h_act = hider_net.get_action(
-                        ot[:config.num_hiders], deterministic=False)
-                    s_act = seeker_net.get_action(
-                        ot[config.num_hiders:], deterministic=False)
-                    actions = torch.cat([h_act, s_act]).cpu().numpy()
-                obs, _, done, _ = arena.step(actions)
-                renderer.total_steps += 1
-                if done:
-                    renderer.total_eps += 1
-                    if not arena.episode_hider_ever_seen.any():
-                        renderer.hider_wins += 1
-                    else:
-                        renderer.seeker_wins += 1
-                    renderer.episode += 1
-                    obs = arena.reset()
+        # Result pause countdown
+        if renderer.result_countdown > 0:
+            renderer.result_countdown -= 1
+            if renderer.result_countdown == 0:
+                obs = arena.reset()
+                renderer.round_num += 1
+        elif not renderer.paused:
+            with torch.no_grad():
+                ot = torch.tensor(obs, device=DEVICE)
+                h_act = hider_net.get_action(
+                    ot[:config.num_hiders], deterministic=False)
+                s_act = seeker_net.get_action(
+                    ot[config.num_hiders:], deterministic=False)
+                actions = torch.cat([h_act, s_act]).cpu().numpy()
+            obs, done, info = arena.step(actions)
+            if done:
+                if info["caught"]:
+                    renderer.seeker_wins += 1
+                    renderer.result_text = "SEEKER WINS!"
+                    renderer.result_color = renderer.WIN_RED
+                else:
+                    renderer.hider_wins += 1
+                    renderer.result_text = "HIDER WINS!"
+                    renderer.result_color = renderer.WIN_GREEN
+                renderer.result_countdown = RESULT_PAUSE_FRAMES
 
         renderer.draw()
         pygame.display.flip()
-        renderer.clock.tick(60)
+        renderer.clock.tick(ROUND_FPS)
 
     pygame.quit()
-    print("Visualization ended.")
+    print(f"\nFinal Score: Hiders {renderer.hider_wins} - "
+          f"{renderer.seeker_wins} Seekers")
 
 
 if __name__ == "__main__":
