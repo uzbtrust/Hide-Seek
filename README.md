@@ -152,10 +152,11 @@ This creates an **auto-curriculum**: each new strategy that one team discovers f
 |--------|--------|-------|
 | Hider in line-of-sight | +1 per step | -1 per step |
 | No hider visible | -1 per step | +1 per step |
+| Chase proximity bonus | +0.3 × (1 - dist/diag) | — |
 | Full episode survival (unseen) | — | +5 bonus |
-| Idle > 20 steps | -0.5 | -0.5 |
+| Idle > 8 steps | -1.5 | -1.5 |
 
-No manually engineered sub-rewards beyond these signals. All complex behavior emerges from this simple reward structure.
+The **chase reward** gives seekers a smooth gradient signal to move toward hiders, even when no hider is in line-of-sight. This prevents the "standing still" problem in large arenas.
 
 ---
 

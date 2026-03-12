@@ -50,6 +50,9 @@ class Config:
     lidar_range: float = 10.0
     local_obs_radius: float = 6.0
     max_nearby_entities: int = 6
+    chase_reward: float = 0.3
+    idle_penalty: float = -1.5
+    idle_threshold: int = 8
     checkpoint_path: str = "checkpoint.pth"
 
 
@@ -79,7 +82,7 @@ class PPONetwork(nn.Module):
 # ── Arena (single-env with walls) ────────────────────────────────────
 class Arena:
     NUM_ACTIONS: int = 6
-    MOVE_SPEED: float = 0.3
+    MOVE_SPEED: float = 0.5
 
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
