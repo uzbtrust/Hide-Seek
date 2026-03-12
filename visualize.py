@@ -138,6 +138,11 @@ class Arena:
             (W*0.65, H*0.13, T,      H*0.12), # bottom-center-right V
             (W*0.14, H*0.50, W*0.12, T),      # mid-left H
             (W*0.86, H*0.50, W*0.12, T),      # mid-right H
+            # ── Additional cover ──
+            (W*0.38, H*0.38, T,      H*0.14), # inner-left V
+            (W*0.62, H*0.62, T,      H*0.14), # inner-right V
+            (W*0.25, H*0.55, W*0.10, T),      # left-mid H
+            (W*0.75, H*0.45, W*0.10, T),      # right-mid H
         ]
         self.NW = len(wall_defs)
         self.wall_pos = np.array([[d[0], d[1]] for d in wall_defs], np.float32)
