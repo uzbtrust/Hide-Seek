@@ -54,6 +54,9 @@ class Config:
     idle_penalty: float = -1.5
     idle_threshold: int = 8
     spread_reward: float = 0.2
+    pursuit_reward: float = 1.0
+    evasion_reward: float = 0.5
+    catch_radius: float = 1.5
     checkpoint_path: str = "checkpoint.pth"
 
 
@@ -377,7 +380,15 @@ class Arena:
         vis = self._check_los()
         self.hider_seen = vis
         self.episode_hider_ever_seen |= vis
-        done = self.step_count >= self.cfg.max_episode_steps
+        # Catch mechanic: seeker within catch_radius of visible hider = episode ends
+        catch_done = False
+        for h_i in range(self.NH):
+            if vis[h_i]:
+                for s_i in range(self.NS):
+                    d = np.linalg.norm(self.agent_pos[self.NH + s_i] - self.agent_pos[h_i])
+                    if d < self.cfg.catch_radius:
+                        catch_done = True
+        done = (self.step_count >= self.cfg.max_episode_steps) or catch_done
         rewards = np.zeros(self.NA, np.float32)
         any_seen = vis.any()
         for s_i in range(self.NS):
