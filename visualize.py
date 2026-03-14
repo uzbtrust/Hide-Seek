@@ -35,7 +35,7 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────
 ROUND_FPS = 60
-ROUND_SECONDS = 5
+ROUND_SECONDS = 8
 ROUND_STEPS = ROUND_FPS * ROUND_SECONDS        # 300 steps = 5 sec
 RESULT_PAUSE_FRAMES = ROUND_FPS * 2             # 2 sec pause after result
 
@@ -56,7 +56,7 @@ class Config:
     lidar_range: float = 10.0
     local_obs_radius: float = 6.0
     max_nearby_entities: int = 6
-    catch_radius: float = 1.5
+    catch_radius: float = 2.5
     checkpoint_path: str = "checkpoint.pth"
 
 
@@ -118,31 +118,31 @@ class Arena:
         T = 0.6
         W, H = self.W, self.H
         wall_defs = [
-            # ── Center cross ──
-            (W*0.50, H*0.50, W*0.40, T),      # center H
-            (W*0.50, H*0.50, T,      H*0.40), # center V
-            # ── Corner alcoves (L-shapes) ──
-            (W*0.20, H*0.82, W*0.24, T),      # TL H
-            (W*0.09, H*0.72, T,      H*0.22), # TL V
-            (W*0.80, H*0.82, W*0.24, T),      # TR H
-            (W*0.91, H*0.72, T,      H*0.22), # TR V
-            (W*0.20, H*0.18, W*0.24, T),      # BL H
-            (W*0.09, H*0.28, T,      H*0.22), # BL V
-            (W*0.80, H*0.18, W*0.24, T),      # BR H
-            (W*0.91, H*0.28, T,      H*0.22), # BR V
-            # ── Mid-field barriers ──
-            (W*0.33, H*0.68, W*0.14, T),      # upper-left H
-            (W*0.67, H*0.32, W*0.14, T),      # lower-right H
+            # ── Center cross (shorter for wider passages) ──
+            (W*0.50, H*0.50, W*0.28, T),      # center H
+            (W*0.50, H*0.50, T,      H*0.28), # center V
+            # ── Corner alcoves (L-shapes, trimmed) ──
+            (W*0.18, H*0.84, W*0.18, T),      # TL H
+            (W*0.08, H*0.74, T,      H*0.16), # TL V
+            (W*0.82, H*0.84, W*0.18, T),      # TR H
+            (W*0.92, H*0.74, T,      H*0.16), # TR V
+            (W*0.18, H*0.16, W*0.18, T),      # BL H
+            (W*0.08, H*0.26, T,      H*0.16), # BL V
+            (W*0.82, H*0.16, W*0.18, T),      # BR H
+            (W*0.92, H*0.26, T,      H*0.16), # BR V
+            # ── Mid-field barriers (narrower) ──
+            (W*0.30, H*0.70, W*0.10, T),      # upper-left H
+            (W*0.70, H*0.30, W*0.10, T),      # lower-right H
             # ── Extra hiding spots ──
-            (W*0.35, H*0.87, T,      H*0.12), # top-center-left V
-            (W*0.65, H*0.13, T,      H*0.12), # bottom-center-right V
-            (W*0.14, H*0.50, W*0.12, T),      # mid-left H
-            (W*0.86, H*0.50, W*0.12, T),      # mid-right H
-            # ── Additional cover ──
-            (W*0.38, H*0.38, T,      H*0.14), # inner-left V
-            (W*0.62, H*0.62, T,      H*0.14), # inner-right V
-            (W*0.25, H*0.55, W*0.10, T),      # left-mid H
-            (W*0.75, H*0.45, W*0.10, T),      # right-mid H
+            (W*0.35, H*0.88, T,      H*0.10), # top-center-left V
+            (W*0.65, H*0.12, T,      H*0.10), # bottom-center-right V
+            (W*0.13, H*0.50, W*0.08, T),      # mid-left H
+            (W*0.87, H*0.50, W*0.08, T),      # mid-right H
+            # ── Additional cover (moved further from center) ──
+            (W*0.33, H*0.35, T,      H*0.10), # inner-left V
+            (W*0.67, H*0.65, T,      H*0.10), # inner-right V
+            (W*0.22, H*0.56, W*0.08, T),      # left-mid H
+            (W*0.78, H*0.44, W*0.08, T),      # right-mid H
         ]
         self.NW = len(wall_defs)
         self.wall_pos = np.array([[d[0], d[1]] for d in wall_defs], np.float32)
