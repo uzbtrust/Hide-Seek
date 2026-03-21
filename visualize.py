@@ -57,7 +57,7 @@ class Config:
     local_obs_radius: float = 6.0
     max_nearby_entities: int = 6
     catch_radius: float = 2.5
-    checkpoint_path: str = "checkpoint.pth"
+    checkpoint_path: str = "data/checkpoint.pth"
 
 
 # ── PPO Network (inference only) ─────────────────────────────────────

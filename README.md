@@ -15,7 +15,7 @@ Inspired by OpenAI's 2019 paper *"Emergent Tool Use from Multi-Agent Autocurricu
 
 > *Run `python visualize.py` after training to watch agents play in real-time.*
 
-![Demo placeholder](training_progress.png)
+![Training Progress](data/training_progress.png)
 
 ---
 
@@ -148,15 +148,20 @@ This creates an **auto-curriculum**: each new strategy that one team discovers f
 
 ## Reward Structure
 
-| Signal | Seeker | Hider |
-|--------|--------|-------|
-| Hider in line-of-sight | +1 per step | -1 per step |
-| No hider visible | -1 per step | +1 per step |
-| Chase proximity bonus | +0.3 × (1 - dist/diag) | — |
-| Full episode survival (unseen) | — | +5 bonus |
-| Idle > 8 steps | -1.5 | -1.5 |
+| Signal | Type | Seeker | Hider |
+|--------|------|--------|-------|
+| Hider visible to seeker | Per-step | +0.08 | -0.08 |
+| Hider hidden from seeker | Per-step | -0.08 | +0.08 |
+| Chase proximity gradient | Per-step | +0.03 × (1-d/diag) | — |
+| Pursuit (visible + close) | Per-step | +0.15 × (1-d/diag) | — |
+| Evasion (visible + far) | Per-step | — | +0.15 × (d/diag) |
+| Seeker spread bonus | Per-step | +0.05 × (d/diag) | — |
+| **Catch** (within 4.5 + LOS) | Terminal | **+14.0** | **-14.0** |
+| **Survival** (timeout) | Terminal | -8.0 | **+3.5** |
+| Never seen bonus | Terminal | — | +1.0 |
+| Idle > 8 steps | Per-step | -0.3 | -0.3 |
 
-The **chase reward** gives seekers a smooth gradient signal to move toward hiders, even when no hider is in line-of-sight. This prevents the "standing still" problem in large arenas.
+**Design principle:** Per-step rewards are small shaping signals (0.03–0.15). Terminal rewards are the main learning signal (3.5–14.0). This prevents reward scale imbalance and ensures meaningful policy learning.
 
 ---
 
@@ -180,6 +185,7 @@ Linear(6)     Linear(1)
 - **Policy head** initialized with gain 0.01 for initial uniform exploration
 - **LayerNorm** for training stability across diverse observation scales
 - All agents on a team **share one network** (parameter sharing)
+- **79,111 parameters** per team network
 
 ---
 
@@ -203,11 +209,13 @@ Each agent receives a 40-dimensional observation vector:
 
 ```
 Hide & Seek/
-├── train_from_scratch.ipynb   # Full training pipeline → checkpoint.pth
+├── train_from_scratch.ipynb   # Full training pipeline → data/checkpoint.pth
 ├── continue_training.ipynb    # Resume training from checkpoint
 ├── visualize.py               # Pygame real-time visualization (inference only)
-├── checkpoint.pth             # Training state (auto-generated)
-├── training_progress.png      # Reward chart (auto-generated)
+├── data/
+│   ├── checkpoint.pth         # Trained model weights (60M steps)
+│   ├── training_progress.png  # Training charts (reward, win rate, entropy)
+│   └── gameplay.gif           # 5-second gameplay demo
 └── README.md                  # This file
 ```
 
@@ -227,7 +235,7 @@ pip install torch numpy matplotlib pygame
 
 1. Open `train_from_scratch.ipynb` in Jupyter or Kaggle
 2. Run all cells — training begins automatically
-3. Checkpoint saves every 50 episodes to `checkpoint.pth`
+3. Checkpoint saves every 50 episodes to `data/checkpoint.pth`
 
 ### Continue Training
 
@@ -270,13 +278,11 @@ Training auto-adapts to hardware — GPU trains by step count, CPU/MPS by time:
 
 | Hardware | Steps/sec | Stop Condition | Est. Time |
 |----------|-----------|----------------|-----------|
-| NVIDIA P100 (Kaggle) | ~60,000 | 60M steps OR 11h | ~17 min |
-| NVIDIA T4 (Kaggle) | ~90,000 | 60M steps OR 11h | ~11 min |
-| NVIDIA A100 | ~180,000 | 60M steps OR 11h | ~6 min |
+| NVIDIA P100 (Kaggle) | ~60,000 | 60M steps | ~17 min |
+| NVIDIA T4 (Kaggle) | ~90,000 | 60M steps | ~11 min |
+| NVIDIA A100 | ~180,000 | 60M steps | ~6 min |
 | Apple MPS (M-series) | ~45,000 | 2 min (time only) | 2 min |
 | CPU (Kaggle / local) | ~5,000 | 30 min (time only) | 30 min |
-
-*GPU trains until 60M steps or 11 hours (whichever first). CPU/MPS use time-only limits.*
 
 ---
 
@@ -299,10 +305,10 @@ Training auto-adapts to hardware — GPU trains by step count, CPU/MPS by time:
   │  │BL│                    │BR│   │
   │  └──┘                    └──┘   │
   └──────────────────────────────────┘
-        30×30 arena · 10 walls · 5 boxes
+        30×30 arena · 20 walls · 5 boxes
 ```
 
-**10 static walls** form a center cross + 4 L-shaped corners, creating rooms and corridors. **5 movable boxes** can be pushed by agents to build shelters or breach them. Walls block movement, LiDAR rays, and line-of-sight.
+**20 static walls** form a center cross + 4 L-shaped corners + mid-field barriers, creating rooms and corridors. **5 movable boxes** can be pushed by agents to build shelters or breach them. Walls block movement, LiDAR rays, and line-of-sight.
 
 ---
 
@@ -318,7 +324,7 @@ Training auto-adapts to hardware — GPU trains by step count, CPU/MPS by time:
 
 **Self-play opponent pool.** Prevents strategy collapse by sampling opponents from a diverse pool of past policies, creating a natural auto-curriculum.
 
-**Simple reward function.** Only visibility-based rewards plus idle penalty. All emergent behavior (shelter building, box manipulation, breaching) arises from this minimal signal.
+**Balanced reward scale.** Per-step rewards (0.03–0.15) provide directional shaping only. Terminal rewards (catch=14, survival=3.5) are the primary learning signal. This prevents reward scale imbalance that causes entropy collapse.
 
 ---
 
