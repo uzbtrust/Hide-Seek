@@ -15,6 +15,8 @@ Inspired by OpenAI's 2019 paper *"Emergent Tool Use from Multi-Agent Autocurricu
 
 > *Run `python visualize.py` after training to watch agents play in real-time.*
 
+![Gameplay Demo](data/gameplay.gif)
+
 ![Training Progress](data/train_progress.jpg)
 
 ---
@@ -84,7 +86,7 @@ The clipping mechanism ensures $r_t(\theta)$ stays within $[1-\epsilon, 1+\epsil
 
 The full PPO loss combines three terms:
 
-$$L(\theta) = L^{CLIP}(\theta) - c_1 \cdot L^{VF}(\theta) + c_2 \cdot H[\pi_\theta](s_t)$$
+$$L(\theta) = L^{\text{CLIP}}(\theta) - c_1 \cdot L^{\text{VF}}(\theta) + c_2 \cdot \mathbb{H}[\pi_{\theta}]$$
 
 where $L^{VF}$ is the value function loss and $H$ is the entropy bonus.
 
