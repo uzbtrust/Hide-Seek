@@ -15,7 +15,7 @@ Inspired by OpenAI's 2019 paper *"Emergent Tool Use from Multi-Agent Autocurricu
 
 > *Run `python visualize.py` after training to watch agents play in real-time.*
 
-![Training Progress](data/training_progress.png)
+![Training Progress](data/train_progress.jpg)
 
 ---
 
@@ -214,7 +214,7 @@ Hide & Seek/
 ├── visualize.py               # Pygame real-time visualization (inference only)
 ├── data/
 │   ├── checkpoint.pth         # Trained model weights (60M steps)
-│   ├── training_progress.png  # Training charts (reward, win rate, entropy)
+│   ├── train_progress.jpg  # Training charts (reward, win rate, entropy)
 │   └── gameplay.gif           # 5-second gameplay demo
 └── README.md                  # This file
 ```
